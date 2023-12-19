@@ -6,6 +6,9 @@ import api from "api";
 import { List as ImmutableList } from "immutable";
 import { Readability } from '@mozilla/readability';
 import { JSDOM } from 'jsdom';
+import { spawn } from 'child_process';
+import twilioSDK from 'twilio';
+import net from 'net';
 
 //TODO: be more DRY in how we handle types since this
 //      is just copy pasted from headlong-vite codebase.
@@ -23,6 +26,8 @@ type Thought = {
 type ThoughtChangeHistory = Thought[]; // newest first
 type ThoughtList = ImmutableList<[Thought, ThoughtChangeHistory]>;
 
+const bashServerPort = Number(process.env.BASH_SERVER_PORT) || 3031;
+
 const supabaseUrlEnvName = "SUPABASE_URL_HEADLONG";
 const supabaseKeyEnvName = "SUPABASE_SERVICE_ROLE_KEY_HEADLONG";
 const openAIMaxTokens = 500;
@@ -34,9 +39,16 @@ const pplx = api('@pplx/v0#wqe1glpipk635');
 const pplxApiKeyEnvName = "PPLX_API_KEY";
 pplx.auth(process.env[pplxApiKeyEnvName]);
 
+const accountSid = process.env.TWILIO_ACCOUNT_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
+const twilioPhoneNumber = process.env.TWILIO_PHONE_NUMBER;
+const twilioClient = twilioSDK(accountSid, authToken);
+
+
 const jsos = new JsosSession()
     .addInMemory()
     .addSupabaseFromEnv(supabaseUrlEnvName, supabaseKeyEnvName);
+
 
 const thoughtsToOpenAIChatMessages = (thoughts: any, systemMsg: string = "") => {
     const messages = thoughts.map(([thought, history]) => ({role: "assistant", content: thought.body}))
@@ -46,7 +58,13 @@ const thoughtsToOpenAIChatMessages = (thoughts: any, systemMsg: string = "") => 
     return messages;
 }
 
-const func: "function" = "function";
+const client = net.createConnection({ port: bashServerPort }, () => {
+    console.log('connected to bashServer on port ', bashServerPort);
+});
+   
+client.on('end', () => {
+    console.log('disconnected from server');
+});
 
 // Last thought in the thoughtList is the call to action.
 const generateMessages = (thoughtList: ThoughtList) => {
@@ -95,7 +113,7 @@ const tools = {
 
         },
         schema: {
-            "type": func,
+            "type": 'function' as 'function',
             "function": {
                 "name": "searchGoogle",
                 "description": "Google search, also known as web search, or just search. use this to look up things",
@@ -122,10 +140,12 @@ const tools = {
             const readability = new Readability(document);
             const article = readability.parse();
 
-            addThought(`observation: fetched ${args["url"]}: ` + article);
+            if (article?.textContent) {
+                addThought(`observation: fetched ${args["url"]}: ` + article.textContent);
+            }
         },
         schema: {
-            "type": func,
+            "type": 'function' as 'function',
             "function": {
                 "name": "visitURL",
                 "description": "fetch a website. can be in the form of clicking a link",
@@ -141,18 +161,201 @@ const tools = {
                 }
             }
         }
-
+    },
+    openNewShell: {
+        execute: async (args: object, addThought: (thought: string) => void) => {
+            client.write(
+                JSON.stringify({
+                    type: "openNewShell",
+                    payload: {id: args["shellID"]}
+                })
+            );
+        },
+        schema: {
+            "type": 'function' as 'function',
+            "function": {
+                "name": "openNewShell",
+                "description": "create a new shell with a unique ID",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "shellPath": {
+                            "type": "string",
+                            "default": "/bin/sh",
+                            "description": "the path to the shell binary, e.g. /bin/sh"
+                        },
+                        "shellArgs": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "the arguments to pass to the shell binary"
+                        },
+                        "id": {
+                            "type": "string",
+                            "description": "a unique ID for the new shell"
+                        },
+                    },
+                }
+            }
+        }
+    },
+    switchToShell: {
+        execute: async (args: object, addThought: (thought: string) => void) => {
+            client.write(
+                JSON.stringify({
+                    type: "switchToShell",
+                    payload: {id: args["id"]}
+                })
+            );
+        },
+        schema: {
+            "type": 'function' as 'function',
+            "function": {
+                "name": "switchToShell",
+                "description": "make the shell with the provided ID the active shell. i.e. 'bring it to the front'",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "description": "the ID of the shell to make the active shell"
+                        },
+                    },
+                }
+            }
+        }
+    },
+    executeShellCommand: {
+        execute: async (args: object, addThought: (thought: string) => void) => {
+            client.write(
+                JSON.stringify({
+                    type: "runCommand",
+                    payload: {command: args["command"]}
+                })
+            );
+        },
+        schema: {
+            "type": 'function' as 'function',
+            "function": {
+                "name": "executeShellCommand",
+                "description": "use an existing shell to execute a command. run a command such as ls, pwd, etc.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {
+                            "type": "string",
+                            "description": "the shell command to execute in the active shell, i.e. the terminal"
+                        },
+                    },
+                }
+            }
+        }
+    },
+    sendText: {
+        execute: async (args: object, addThought: (thought: string) => void) => {
+            if (args["to"] !== "+15103567082") {
+                console.log("For now, we don't allow text anybody other than Andy");
+                return;
+            }
+            twilioClient.messages.create({
+                body: args["body"],
+                from: twilioPhoneNumber,
+                to: args["to"],
+            }).then(message => console.log(message.sid));
+        },
+        schema: {
+            "type": 'function' as 'function',
+            "function": {
+                "name": "sendText",
+                "description": "send a text message to a phone number",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "body": {
+                            "type": "string",
+                            "description": "the message to send"
+                        },
+                        "to": {
+                            "type": "string",
+                            "description": "the phone number to send the message to"
+                        },
+                    },
+                }
+            }
+        }
+    },
+    checkTime: {
+        execute: async (args: object, addThought: (thought: string) => void) => {
+            const now = new Date();
+            const timeOptions = {
+                timeZone: args["timezone"] || 'America/Los_Angeles',
+                year: 'numeric' as 'numeric',
+                month: 'long' as 'long',
+                day: 'numeric' as 'numeric',
+                weekday: 'long' as 'long',
+                hour: '2-digit' as '2-digit',
+                minute: '2-digit' as '2-digit',
+                second: '2-digit' as '2-digit',
+                hour12: true
+            };
+            const timeInPT = now.toLocaleString('en-US', timeOptions);
+            addThought("observation: it's " + timeInPT);
+        },
+        schema: {
+            "type": 'function' as 'function',
+            "function": {
+                "name": "checkTime",
+                "description": "see what time it is, could be looking my watch or a clock",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "timezone": {
+                            "type": "string",
+                            "description": "the timezone. default is 'America/Los_Angeles'"
+                        },
+                    },
+                }
+            }
+        }
     }
 }
 
-const callback = async (newVar) => {
-    function addThought(thoughtStr: string) {
-        newVar.__jsosUpdate(old => {
-            let updated = old.addThought(thoughtStr);
-            return updated;
-        });
-        console.log("Added new thought: ", thoughtStr)
+let headlongVar;
+
+function addThought(thoughtStr: string) {
+    if (!headlongVar) {
+        return;
     }
+    headlongVar.__jsosUpdate(old => {
+        let updated = old.addThought(thoughtStr);
+        return updated;
+    }).then(() => {
+        console.log("Added new thought: ", thoughtStr)
+    }).catch((e) => {
+        //if (e.name !== "VarUpdateConflictError") {
+        //    console.log("Failed to add thought. error: ", e);
+        //    return;
+        //}
+        console.log("Failed to add thought. using __jsosPull and retrying. error: ", e);
+        headlongVar.__jsosPull().then((pulledVar) => {
+            pulledVar.__jsosUpdate(old => {
+                let updated = old.addThought(thoughtStr);
+                return updated;
+            }).catch((etwo) => {
+                console.log("Failed to add thought again. error: ", etwo)
+            });
+        });
+    });
+}
+
+client.on('data', (data) => {
+    console.log(data.toString());
+    addThought(data.toString());
+});
+
+const callback = async (newVar) => {
+    headlongVar = newVar;
     if (!newVar.pendingActions?.length) {
         return;
     }
@@ -177,11 +380,15 @@ const callback = async (newVar) => {
         console.log(completion.choices[0].message.tool_calls);
         const functionName = completion.choices[0].message.tool_calls[0].function.name;
         const parsedArgs = JSON.parse(completion.choices[0].message.tool_calls[0].function.arguments);
-        console.log(`calling ${functionName} with args: ${parsedArgs} `);
+        console.log(`calling ${functionName} with args: ${JSON.stringify(parsedArgs)} `);
         tools[functionName].execute(parsedArgs, addThought);
     }
 }
-jsos.subscribeToVar({ name: "headlong", namespace: "headlong-vite-v2", callback })
+console.log("subscribed to var. sub id: ", jsos.subscribeToVar({ name: "headlong", namespace: "headlong-vite-v2", callback }))
+
+console.log("registered tools:\n", Object.keys(tools).join("\n"));
+// TODO: Register any env listeners that would async interrupt "observations: "
+// (or other thoughts?) into consciouness
 
 // Listen for SIGTERM signal
 process.on('SIGTERM', () => {
