@@ -17,7 +17,8 @@
     "jsdom": "^23.0.0",
     "openai": "^4.20.0",
     "serpapi": "^2.0.0",
-    "ts-node": "^10.9.1"
+    "ts-node": "^10.9.1",
+    "twilio": "^4.19.0"
   },
   "devDependencies": {
     "@types/jsdom": "^21.1.6",
