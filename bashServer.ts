@@ -72,7 +72,7 @@ server.on('connection', (socket) => {
                 socket.write("observation: there are no shells open")
             } else {
                 const { command } = payload;
-                env.shells[env.activeShellID].proc.stdin?.write(command);
+                env.shells[env.activeShellID].proc.stdin?.write(command + '\n');
             }
         } else if (type === 'switchToShell') {
             const { id } = payload;
@@ -93,6 +93,7 @@ server.listen(bashServerPort, () => {
   console.log(`bashServer listening on port ${bashServerPort}`);
 });
 
+console.log("done running listen. registering process.on('SIGTERM')")
 // Listen for SIGTERM signal
 process.on('SIGTERM', () => {
     console.log('SIGTERM signal received. Shutting down...');
