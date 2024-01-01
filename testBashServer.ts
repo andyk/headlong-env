@@ -13,7 +13,7 @@ const rl = readline.createInterface({
 });
 
 client.on('data', (data) => {
-    console.log('testBashServer received data: ', data.toString());
+    console.log(data.toString());
 });
 
 function askQuestion() {

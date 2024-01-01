@@ -52,7 +52,7 @@ server.on('connection', (socket) => {
             };
             env.activeShellID = id;
             env.shells[id].proc.stdin?.write('\n');
-            socket.write(`observation: created and shell with ID ${id} and made it the active shell.`)
+            socket.write(`observation: created shell with ID ${id} and made it active shell.`)
 
             // Relay messages from the subprocess to the socket
             env.shells[id].proc.stdout?.on('data', (data) => {
@@ -63,9 +63,11 @@ server.on('connection', (socket) => {
             });
             env.shells[id].proc.on('exit', (data) => {
                 socket.write(`observation: shell '${id}' exited.`);
+                //TODO: mark shell as exited in env.shells
             });
             env.shells[id].proc.on('close', (signal) => {
                 socket.write(`observation: shell '${id}' terminated due to receipt of signal ${signal}`);
+                //TODO: mark shell as closed in env.shells
             });
         } else if (type === 'runCommand') {
             if (env.activeShellID === null) {
@@ -81,12 +83,17 @@ server.on('connection', (socket) => {
                 return;
             }
             env.activeShellID = id;
-            socket.write(`observation: switched to shell '${id}`)
+            socket.write(`observation: switched to shell '${id}'`)
+        } else if (type === 'whichShellActive') {
+            if (env.activeShellID === null) {
+                socket.write("observation: there are no shells open")
+                return;
+            }
+            socket.write(`observation: active shell is '${env.activeShellID}'`)
         } else {
             console.log("received unrecognized type from client: ", type);
         }
     });
-
 });
 
 server.listen(bashServerPort, () => {
