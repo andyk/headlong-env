@@ -21,80 +21,114 @@ const env: Env = {
 
 const server = net.createServer();
 
+const sockets: net.Socket[] = [];
+
+function writeToSockets(msg: string) {
+    for (const socket of sockets) {
+        socket.write(msg);
+    }
+}
+
+function newShell(payload: any) {
+    const {
+        shellID = undefined, shellPath = "/bin/bash", shellArgs = []
+    } = payload;
+    const id = shellID ? shellID : "shell-" + Math.random().toString(36).substring(7);
+    const augmentedShellArgs = [
+        '--rcfile',
+        './.bashrc',
+        ...shellArgs,
+        "-i"
+    ];
+    console.log("calling spawn with: ", shellPath, augmentedShellArgs);
+    env.shells[id] = {
+        proc: spawn(
+            `${shellPath}`,
+            augmentedShellArgs,
+            { stdio: ['pipe', 'pipe', 'pipe', 'ipc'] }
+        ),
+        history: ''
+    };
+    env.activeShellID = id;
+    env.shells[id].proc.stdin?.write('\n');
+    writeToSockets(`observation: created shell with ID ${id} and made it active shell.`);
+
+    // Relay messages from the subprocess to the socket
+    env.shells[id].proc.stdout?.on('data', (data) => {
+        console.log(`observation: shell ${id}:\n` + data);
+        writeToSockets(`observation: shell ${id}:\n` + data);
+    });
+    env.shells[id].proc.stderr?.on('data', (data) => {
+        console.log(`observation: shell ${id}:\n` + data);
+        writeToSockets(`observation: shell ${id}:\n` + data);
+    });
+    env.shells[id].proc.on('exit', (data) => {
+        console.log(`observation: shell '${id}' exited.`);
+        writeToSockets(`observation: shell '${id}' exited.`);
+        //TODO: mark shell as exited in env.shells
+    });
+    env.shells[id].proc.on('close', (signal) => {
+        console.log(`observation: shell '${id}' terminated due to receipt of signal ${signal}`);
+        writeToSockets(`observation: shell '${id}' terminated due to receipt of signal ${signal}`);
+    });
+}
+
+function runCommand(payload: any) {
+    if (env.activeShellID === null) {
+        writeToSockets("observation: there are no shells open");
+    } else {
+        const { command } = payload;
+        env.shells[env.activeShellID].proc.stdin?.write(command + '\n');
+    }
+}
+
+function switchToShell(payload: any) {
+    const { id } = payload;
+    if (id in env.shells) {
+        env.activeShellID = id;
+        writeToSockets(`observation: switched to shell '${id}'`);
+    } else {
+        writeToSockets(`observation: shell '${id}' does not exist`);
+    }
+}
+
+function whichShellActive(payload: any) {
+    if (env.activeShellID === null) {
+        writeToSockets(`observation: there are no shells open`);
+    } else {
+        writeToSockets(`observation: active shell is '${env.activeShellID}'`);
+    }
+}
+
 server.on('connection', (socket) => {
     console.log('bashServer: client connected')
+    sockets.push(socket);
     // Relay messages from the socket to the subprocess
     socket.on('data', (data) => {
         console.log("received: ", data.toString());
         const msg = JSON.parse(data.toString());
         const { type, payload = {} } = msg;
         if (type === 'openNewShell') {
-            const {
-                shellID = undefined,
-                shellPath = "/bin/bash",
-                shellArgs = []
-            } = payload;
-            const id = shellID ? shellID : "shell-" + Math.random().toString(36).substring(7)
-            const augmentedShellArgs = [
-                '--rcfile',
-                './.bashrc',
-                ...shellArgs,
-                "-i"
-            ]
-            console.log("calling spawn with: ", shellPath, augmentedShellArgs)
-            env.shells[id] = {
-                proc: spawn(
-                    `${shellPath}`,
-                    augmentedShellArgs,
-                    { stdio: [ 'pipe', 'pipe', 'pipe', 'ipc' ] }
-                ),
-                history: ''
-            };
-            env.activeShellID = id;
-            env.shells[id].proc.stdin?.write('\n');
-            socket.write(`observation: created shell with ID ${id} and made it active shell.`)
-
-            // Relay messages from the subprocess to the socket
-            env.shells[id].proc.stdout?.on('data', (data) => {
-                socket.write(`observation: shell ${id}:\n` + data);
-            });
-            env.shells[id].proc.stderr?.on('data', (data) => {
-                socket.write(`observation: shell ${id}:\n` + data);
-            });
-            env.shells[id].proc.on('exit', (data) => {
-                socket.write(`observation: shell '${id}' exited.`);
-                //TODO: mark shell as exited in env.shells
-            });
-            env.shells[id].proc.on('close', (signal) => {
-                socket.write(`observation: shell '${id}' terminated due to receipt of signal ${signal}`);
-                //TODO: mark shell as closed in env.shells
-            });
+            newShell(payload);
         } else if (type === 'runCommand') {
-            if (env.activeShellID === null) {
-                socket.write("observation: there are no shells open")
-            } else {
-                const { command } = payload;
-                env.shells[env.activeShellID].proc.stdin?.write(command + '\n');
-            }
+            runCommand(payload);
         } else if (type === 'switchToShell') {
-            const { id } = payload;
-            if (!(payload.id in env.shells)) {
-                socket.write(`observation: can't find shell with ID '${id}'`)
-                return;
-            }
-            env.activeShellID = id;
-            socket.write(`observation: switched to shell '${id}'`)
+            switchToShell(payload);
         } else if (type === 'whichShellActive') {
-            if (env.activeShellID === null) {
-                socket.write("observation: there are no shells open")
-                return;
-            }
-            socket.write(`observation: active shell is '${env.activeShellID}'`)
+            whichShellActive(payload);
         } else {
             console.log("received unrecognized type from client: ", type);
         }
     });
+    socket.on('close', () => {
+        console.log('a client disconnected');
+        const index = sockets.indexOf(socket);
+        if (index !== -1) {
+            sockets.splice(index, 1);
+        }
+    });
 });
+
 
 server.listen(bashServerPort, () => {
   console.log(`bashServer listening on port ${bashServerPort}`);
