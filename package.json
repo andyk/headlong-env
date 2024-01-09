@@ -4,7 +4,8 @@
   "description": "A process that provides actuation and sensory input for a headlong agent. Operates by listening to the headlong var, executing actions, and updating the headlong var with observations.",
   "main": "index.js",
   "scripts": {
-    "dev": "npx ts-node main.ts",
+    "bashServer": "npx ts-node bashServer.ts",
+    "env": "npx ts-node main.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",

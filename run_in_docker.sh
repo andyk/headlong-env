@@ -29,5 +29,8 @@ docker run -it \
   -v "$SCRIPT_DIR":/app/headlong-env \
   -v "$SCRIPT_DIR"/../jsos:/app/jsos \
   -v "$HISTORY_FILE":/root/.bash_history \
-  node /bin/bash
+  -w /app/headlong-env \
+  --name headlong-env \
+node /bin/bash
+#  node npm run dev
 
