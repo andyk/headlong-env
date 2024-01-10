@@ -17,11 +17,31 @@ client.on('data', (data) => {
 });
 
 function askQuestion() {
-    rl.question('Enter command type and args (JSON format):\n', (input) => {
+    rl.question('Enter command type (n, c, s, w, e) and args (if any):\n', (input) => {
         try {
-            const parsedInput = JSON.parse(input);
-            client.write(JSON.stringify(parsedInput));
-            console.log("wrote to bashServer: ", JSON.stringify(parsedInput));
+            if (input === '') {
+                askQuestion();
+                return;
+            }
+            const [commandType, ...args] = input.split(' ');
+            let msg;
+            if (commandType === 'newShell' || commandType === 'n') {
+                msg = {type: 'newShell', payload: {}};
+            } else if (commandType === 'runCommand' || commandType === 'c') {
+                msg = {type: 'runCommand', payload: {command: new String(args.join(' '))}};
+            } else if (commandType === 'switchToShell' || commandType === 's') {
+                msg = {type: 'switchToShell', payload: {id: args}};
+            } else if (commandType === 'whichShellActive' || commandType === 'w') {
+                msg = {type: 'whichShellActive', payload: {}};
+            } else if (commandType === 'exit' || commandType === 'e') {
+                process.exit(0);
+            } else { 
+                console.log("unrecognized command type: ", commandType);
+                askQuestion();
+                return;
+            }
+            client.write(JSON.stringify(msg));
+            console.log("wrote to bashServer: ", JSON.stringify(msg));
         } catch(e) {
             console.log("error parsing input and sending it to bashServer: ", e);
         }

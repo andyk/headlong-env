@@ -85,7 +85,11 @@ When deciding on what action take, use on the following stream of recent thought
         role: "assistant",
         content: `I need to generate a function call that best accomplishes the ${thoughtList.last<[Thought, ThoughtChangeHistory]>()[0].body}`
     }
-    console.log("generated messages: ", [systemMsg, thoughtListMsg, callToActionMsg]);
+    console.log("generated messages: ", [
+        systemMsg,
+        {role: "assistant", content: "..." + thoughtListStr.slice(-200)},
+        callToActionMsg
+    ]);
     return [systemMsg, thoughtListMsg, callToActionMsg];
 }
 
@@ -161,11 +165,11 @@ const tools = {
             }
         }
     },
-    openNewShell: {
+    newShell: {
         execute: async (args: object, addThought: (thought: string) => void) => {
             client.write(
                 JSON.stringify({
-                    type: "openNewShell",
+                    type: "newShell",
                     payload: {
                         shellID: args["shellID"],
                         shellPath: args["shellPath"],
@@ -177,26 +181,26 @@ const tools = {
         schema: {
             "type": 'function' as 'function',
             "function": {
-                "name": "openNewShell",
-                "description": "create a new shell with a unique ID",
+                "name": "newShell",
+                "description": "create a new shell",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "shellPath": {
+                        "shellBinary": {
                             "type": "string",
                             "default": "/bin/bash",
-                            "description": "the path to the shell binary, e.g. /bin/sh"
+                            "description": "path of shell binary, e.g. /bin/bash"
                         },
                         "shellArgs": {
                             "type": "array",
                             "items": {
                                 "type": "string"
                             },
-                            "description": "the arguments to pass to the shell binary"
+                            "description": "arguments to pass to the shell binary"
                         },
                         "shellID": {
                             "type": "string",
-                            "description": "a unique ID for the new shell"
+                            "description": "unique ID for the new shell"
                         },
                     },
                 }
@@ -216,13 +220,13 @@ const tools = {
             "type": 'function' as 'function',
             "function": {
                 "name": "switchToShell",
-                "description": "make the shell with the provided ID the active shell. i.e. 'bring it to the front'",
+                "description": "switch to the specified shell, i.e. 'bring it to the front'",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "id": {
                             "type": "string",
-                            "description": "the ID of the shell to make the active shell"
+                            "description": "the ID of the shell to switch to"
                         },
                     },
                 }
@@ -242,13 +246,13 @@ const tools = {
             "type": 'function' as 'function',
             "function": {
                 "name": "executeShellCommand",
-                "description": "use an existing shell to execute a command. run a command such as ls, pwd, etc.",
+                "description": "run a command in the currently active shell",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "command": {
                             "type": "string",
-                            "description": "the shell command to execute in the active shell, i.e. the terminal"
+                            "description": "the shell command to execute in the active shell"
                         },
                     },
                 }

@@ -108,7 +108,7 @@ server.on('connection', (socket) => {
         console.log("received: ", data.toString());
         const msg = JSON.parse(data.toString());
         const { type, payload = {} } = msg;
-        if (type === 'openNewShell') {
+        if (type === 'newShell') {
             newShell(payload);
         } else if (type === 'runCommand') {
             runCommand(payload);
