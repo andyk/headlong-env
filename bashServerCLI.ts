@@ -26,7 +26,10 @@ function askQuestion() {
             const [commandType, ...args] = input.split(' ');
             let msg;
             if (commandType === 'newShell' || commandType === 'n') {
-                msg = {type: 'newShell', payload: {}};
+                msg = args.length === 1 ?
+                    {type: 'newShell', payload: {shellID: args[0]}}
+                :
+                    msg = {type: 'newShell', payload: {}};
             } else if (commandType === 'runCommand' || commandType === 'c') {
                 msg = {type: 'runCommand', payload: {command: new String(args.join(' '))}};
             } else if (commandType === 'switchToShell' || commandType === 's') {
