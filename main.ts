@@ -334,9 +334,30 @@ const tools = {
   },
 };
 
-async function addThought(agentName: string, body: string, index?: number) {
-  //use supbase to add new thought at end of thoughts table
-  if (index === undefined) {
+async function computeInsertIndex(insertAfterIndex: number) {
+  console.log("computing index for insertAfterIndex: ", insertAfterIndex);
+  const { data: sortedThoughtsAfterProvidedIndex, error: thoughtError } = await supabase
+    .from("thoughts")
+    .select("index")
+    .eq("agent_name", agentName)
+    .order("index", { ascending: true })
+    .gt("index", insertAfterIndex)
+    .limit(1)
+    .maybeSingle();
+  if (thoughtError) {
+    console.error("Error fetching thoughts with index greater than insertAfterIndex", thoughtError);
+    throw thoughtError;
+  }
+  if (sortedThoughtsAfterProvidedIndex === null) {
+    return insertAfterIndex + 1.0;
+  } else {
+    return (insertAfterIndex + sortedThoughtsAfterProvidedIndex.index) / 2;
+  }
+}
+
+async function addNewThought(agentName: string, body: string, addAfterIndex?: number) {
+  console.log("adding thought: ", body, " after index: ", addAfterIndex);
+  if (addAfterIndex === undefined) {
     // get max index from thoughts table
     const { data: row, error } = await supabase
       .from("thoughts")
@@ -347,49 +368,69 @@ async function addThought(agentName: string, body: string, index?: number) {
     const maxIndex = row?.index || 0;
     await supabase.from("thoughts").insert([{ agent_name: agentName, body: body, index: maxIndex + 1.0 }]);
   } else {
-    supabase.from("thoughts").insert([{ agent_name: agentName, body: body, index: index }]);
+    const computedIndex = await computeInsertIndex(addAfterIndex);
+    console.log("Inserting thought with computed index: ", computedIndex);
+    supabase.from("thoughts").insert([{ agent_name: agentName, body: body, index: computedIndex }]);
   }
 }
 
 bashServerClient.on("data", (data) => {
   console.log(data.toString());
-  addThought(agentName, data.toString());
+  addNewThought(agentName, data.toString());
 });
 
 const handleThought = async (thought: Thought) => {
   // test if thought.body starts with "action: " and return if not
-  if (!thought.body.startsWith("action: ")) {
+  if (thought.body.toLowerCase().startsWith("action: ") && thought.metadata !== null && thought.metadata["needs_handling"] === true) {
+    console.log("Handling action: ", thought);
+    // update the thought row to mark needs_handling as false
+    const { data, error } = await supabase
+      .from("thoughts")
+      .update({ metadata: { needs_handling: false } })
+      .eq("id", thought.id)
+      .eq("agent_name", agentName);
+  } else {
+    console.log("exiting handleThought since this isn't an ACTION or it doesn't *needs_handling*: ", thought);
     return;
   }
-  // get all thoughts up and including the one being handled
+  console.log("handling an ACTION that *needs_handling*: ", thought.body);
+  // get all thoughts up and including the one being handled:w
+
   const { data: thoughts, error } = await supabase
     .from("thoughts")
     .select("*")
     .eq("agent_name", agentName)
     .order("index", { ascending: true })
     .lte("index", thought.index);
-  if (thoughts === null) {
+  if (thoughts === null || thoughts.length === 0) {
     console.log("no thoughts found");
     return;
   }
+  const prompt = generateMessages(thoughts);
+  console.log("calling GPT4 for completion with message: ", prompt);
   const completion = await openai.chat.completions.create({
     model: "gpt-4-1106-preview",
-    messages: generateMessages(thoughts),
+    messages: prompt,
     max_tokens: openAIMaxTokens,
     temperature: openAITemp,
     tools: Object.values(tools).map((tool) => tool.schema),
     tool_choice: "auto",
   });
 
+ console.log("GPT4 completion: ", completion.choices[0].message);
+
   if (completion.choices[0].message.content) {
-    addThought(agentName, completion.choices[0].message.content);
+    addNewThought(agentName, completion.choices[0].message.content);
     console.log("No functioun called, added thought: ", completion.choices[0].message.content);
   } else if (completion.choices[0].message.tool_calls) {
     console.log(completion.choices[0].message.tool_calls);
     const functionName = completion.choices[0].message.tool_calls[0].function.name;
     const parsedArgs = JSON.parse(completion.choices[0].message.tool_calls[0].function.arguments);
     console.log(`calling ${functionName} with args: ${JSON.stringify(parsedArgs)} `);
-    tools[functionName].execute(parsedArgs, addThought);
+    function partialAddThought(thoughtBody: string) {
+      addNewThought(agentName, thoughtBody, thought.index);
+    }
+    tools[functionName].execute(parsedArgs, partialAddThought);
   }
 };
 
@@ -410,6 +451,26 @@ supabase
       }
     }
   )
+  .subscribe();
+
+const envPresenceRoom = supabase.channel("env_presence_room", {
+  config: {
+    presence: {
+      key: "env",
+    },
+  },
+});
+envPresenceRoom
+  .on("presence", { event: "sync" }, () => {
+    const newState = envPresenceRoom.presenceState();
+    console.log('env_presence_room got a "sync" update: ', newState);
+  })
+  .on("presence", { event: "join" }, ({ key, newPresences }) => {
+    console.log("env_presence_room had a join", key, newPresences);
+  })
+  .on("presence", { event: "leave" }, ({ key, leftPresences }) => {
+    console.log("env_presence_room had a leave", key, leftPresences);
+  })
   .subscribe();
 
 console.log("registered tools:\n", Object.keys(tools).join("\n"));
