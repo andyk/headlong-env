@@ -471,8 +471,11 @@ envPresenceRoom
   .on("presence", { event: "leave" }, ({ key, leftPresences }) => {
     console.log("env_presence_room had a leave", key, leftPresences);
   })
-  .subscribe();
-
+  .subscribe(async (status) => {
+    if (status === 'SUBSCRIBED') {
+      await envPresenceRoom.track({ online_at: new Date().toISOString() })
+    }
+  })
 console.log("registered tools:\n", Object.keys(tools).join("\n"));
 // TODO: Register any env listeners that would async interrupt "observations: "
 // (or other thoughts?) into consciouness
